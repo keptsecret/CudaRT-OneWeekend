@@ -2,6 +2,7 @@
 
 #include "vec3.h"
 #include "hittable.h"
+#include "onb.h"
 
 class sphere : public hittable {
 public:
@@ -15,6 +16,8 @@ public:
 
 	XPU virtual bool hit(const ray& r, float t_min, float t_max, hit_record& rec) const override;
 	GPU virtual bool bounding_box(float time0, float time1, aabb& output_box) const override;
+	GPU virtual float pdf_value(const point3& o, const vec3& v) const override;
+	GPU virtual vec3 random(const vec3& o, curandState* local_rand) const override;
 
 public:
 	point3 center;
@@ -75,4 +78,25 @@ GPU inline bool sphere::bounding_box(float time0, float time1, aabb& output_box)
 			center - vec3(radius, radius, radius),
 			center + vec3(radius, radius, radius));
 	return true;
+}
+
+GPU inline float sphere::pdf_value(const point3 &o, const vec3 &v) const {
+	hit_record rec;
+	if (!this->hit(ray(o, v), 0.001f, infinity, rec)) {
+		return 0;
+	}
+
+	auto cos_theta_max = sqrt(1 - radius * radius / (center - o).length_squared());
+	auto solid_angle = 2 * pi * (1 - cos_theta_max);
+
+    return  1 / solid_angle;
+}
+
+
+GPU inline vec3 sphere::random(const point3& o, curandState* local_rand) const {
+     vec3 direction = center - o;
+     auto distance_squared = direction.length_squared();
+     onb uvw;
+     uvw.build_from_w(direction);
+     return uvw.local(cu_random_to_sphere(radius, distance_squared, local_rand));
 }

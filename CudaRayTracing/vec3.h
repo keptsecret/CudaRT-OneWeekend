@@ -181,6 +181,18 @@ inline vec3 random_cosine_direction() {
 	return vec3(x, y, z);
 }
 
+inline vec3 random_to_sphere(float radius, float distance_squared) {
+    auto r1 = random_float();
+    auto r2 = random_float();
+    auto z = 1 + r2*(sqrt(1-radius*radius/distance_squared) - 1);
+
+    auto phi = 2*pi*r1;
+    auto x = cos(phi)*sqrt(1-z*z);
+    auto y = sin(phi)*sqrt(1-z*z);
+
+    return vec3(x, y, z);
+}
+
 #else
 
 GPU inline vec3 cu_random_in_unit_disk(curandState* local_rand) {
@@ -215,6 +227,18 @@ GPU inline vec3 cu_random_cosine_direction(curandState* local_rand) {
 	float y = sin(phi) * sqrt(r2);
 
 	return vec3(x, y, z);
+}
+
+GPU inline vec3 cu_random_to_sphere(float radius, float distance_squared, curandState* local_rand) {
+    auto r1 = cu_random_float(local_rand);
+    auto r2 = cu_random_float(local_rand);
+    auto z = 1 + r2 * (sqrt(1 - radius * radius / distance_squared) - 1);
+
+    auto phi = 2*pi*r1;
+    auto x = cos(phi)*sqrt(1-z*z);
+    auto y = sin(phi)*sqrt(1-z*z);
+
+    return vec3(x, y, z);
 }
 
 GPU inline vec3 reflect(const vec3& v, const vec3& n) {

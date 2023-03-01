@@ -44,52 +44,84 @@ void check_cuda(cudaError_t result, char const *const func, const char *const fi
     }
 }
 
-GPU vec3 ray_color(const ray& r, hittable** world, hittable** lights, curandState* local_rand) {
-    ray cur_ray = r;
-    vec3 cur_attenuation(1.f, 1.f, 1.f);
-    int max_depth = 50;
-    //vec3 prev_factor(1.f, 1.f, 1.f);
+/*
+{
+	hit_record rec;
 
-    for(int i = 0; i < max_depth; i++) {
+	// exceeded the ray bounce limit, no more light gathered
+	if (depth <= 0) {
+		return color(0, 0, 0);
+	}
+
+	// return background color if ray hits nothing
+	if (!world.hit(r, 0.001f, infinity, rec)) {
+		return background;
+	}
+
+	ray scattered;
+	color attenuation;
+	color emitted = rec.material_ptr->emitted(r, rec, rec.u, rec.v, rec.p);
+	float pdf_val;
+
+	if (!rec.material_ptr->scatter(r, rec, attenuation, scattered, pdf_val)) {
+		return emitted;
+	}
+
+	auto p0 = std::make_shared<hittable_pdf>(rec.p, lights);
+	auto p1 = std::make_shared<cosine_pdf>(rec.normal);
+	mixture_pdf mixed_pdf(p0, p1);
+
+	scattered = ray(rec.p, mixed_pdf.generate(), r.time());
+	pdf_val = mixed_pdf.value(scattered.direction());
+
+	return emitted + attenuation * rec.material_ptr->scattering_pdf(r, rec, scattered) * ray_color(scattered, background, world, lights, depth - 1) / pdf_val;
+}
+*/
+
+GPU color ray_color(const ray& r, hittable** world, hittable** lights, curandState* local_rand) {
+    ray cur_ray = r;
+    vec3 cur_attenuation = vec3(1.0,1.0,1.0);
+
+    for(int i = 0; i < 10; i++) {
         hit_record rec;
-        rec.normal = vec3(0,0,0);
-        if ((*world)->hit(cur_ray, 0.001f, infinity, rec)) {
+        if ((*world)->hit(cur_ray, 0.001f, FLT_MAX, rec)) {
             ray scattered;
             vec3 attenuation;
+            float pdf_val;
             color emitted = rec.material_ptr->emitted(r, rec, rec.u, rec.v, rec.p);
-	        float pdf_val;
 
-            if (!rec.material_ptr->scatter(cur_ray, rec, attenuation, scattered, pdf_val, local_rand)) {
+            if(!rec.material_ptr->scatter(cur_ray, rec, attenuation, scattered, pdf_val, local_rand)) {
                 return cur_attenuation * emitted;
-            } else {
+            }
+            else {
                 auto p0 = hittable_pdf(rec.p, *lights);
                 auto p1 = cosine_pdf(rec.normal);
+                mixture_pdf mixed_pdf(&p0, &p1);
 
-                mixture_pdf p(&p0, &p1);
-                scattered = ray(rec.p, p.generate(local_rand), r.time());
-                pdf_val = p.value(scattered.direction());
+                scattered = ray(rec.p, mixed_pdf.generate(local_rand), r.time());
+                pdf_val = mixed_pdf.value(scattered.direction());
 
-                cur_attenuation *= attenuation * rec.material_ptr->scattering_pdf(r, rec, scattered) / pdf_val;;
+                cur_attenuation *= attenuation * rec.material_ptr->scattering_pdf(r, rec, scattered) / pdf_val;
                 cur_ray = scattered;
             }
-        } else {
-            vec3 unit_direction = cu_unit_vector(cur_ray.direction());
-            float t = 0.5f * (unit_direction.y() + 1.0f);
-            vec3 c = (1.0f - t) * vec3(1.0, 1.0, 1.0) + t * vec3(0.5, 0.7, 1.0);
+        }
+        else {
+            vec3 unit_direction = unit_vector(cur_ray.direction());
+            float t = 0.5f*(unit_direction.y() + 1.0f);
+            vec3 c = (1.0f - t) * vec3(1.0f, 1.0f, 1.0f) + t * vec3(0.5f, 0.7f, 1.0f);
             return cur_attenuation * c;
         }
     }
-
-    return vec3(0.0,0.0,0.0);
+    return vec3(0.0,0.0,0.0); // exceeded recursion
 }
 
 __global__ void create_world(hittable** d_list, hittable** d_world, hittable** lights, camera** cam) {
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         *(d_list) = new sphere(vec3(0, 0, -1), 0.5f, new lambertian(new solid_color(0.8f, 0.3f, 0.3f)));
-        *(d_list + 1) = new sphere(vec3(0, -100.5f, -1), 100, new metal(new solid_color(0.8f, 0.8f, 0.2f), 0.1f));
-        *(d_list + 2) = new sphere(vec3(0, 2, -1), 0.25f, new diffuse_light(new solid_color(1.0f, 1.0f, 1.0f)));
+        *(d_list + 1) = new sphere(vec3(0, -100.5f, -1), 100, new lambertian(new solid_color(0.8f, 0.8f, 0.2f)));
+        *(d_list + 2) = new sphere(vec3(2, 2, -1), 0.25f, new diffuse_light(new solid_color(1.0f, 1.0f, 1.0f)));
         *d_world = new hittable_list(d_list, 3);
-        *lights = new sphere(vec3(0, 2, -1), 0.25f, new diffuse_light(new solid_color(5.0f, 5.0f, 5.0f)));
+        *lights = new sphere(vec3(2, 2, -1), 0.25f, new diffuse_light(new solid_color(1.0f, 1.0f, 1.0f)));
 
         point3 lookfrom(0, 0.25, 5);
         point3 lookat(0, 0.5, 0);
@@ -173,6 +205,7 @@ int main() {
 
     const int cr_x = 16;
     const int cr_y = 16;
+    const int samples_per_pixel = 1000;
     
     clock_t start, stop;
     start = clock();
@@ -184,7 +217,7 @@ int main() {
     checkCudaErrors(cudaDeviceSynchronize());
 
     std::cerr << "Starting render" << std::endl;
-    render<<<blocks, threads>>>(fb, width, height, 1000, cam, world, lights, rand_state);
+    render<<<blocks, threads>>>(fb, width, height, samples_per_pixel, cam, world, lights, rand_state);
     checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaDeviceSynchronize());
 
@@ -198,9 +231,18 @@ int main() {
     for (int j = 0; j < height; j++) {
         for (int i = 0; i < width; i++) {
             size_t idx = j * width + i;
-            pixels[idx * channel_num] = (unsigned char)(255.99f * fb[idx].x());
-            pixels[idx * channel_num + 1] = (unsigned char)(255.99f * fb[idx].y());
-            pixels[idx * channel_num + 2] = (unsigned char)(255.99f * fb[idx].z());
+
+            float r = fb[idx].x();
+            float g = fb[idx].y();
+            float b = fb[idx].z();
+
+			r = std::sqrt(r);
+			g = std::sqrt(g);
+			b = std::sqrt(b);
+
+            pixels[idx * channel_num] = (unsigned char)(255.99f * r);
+            pixels[idx * channel_num + 1] = (unsigned char)(255.99f * g);
+            pixels[idx * channel_num + 2] = (unsigned char)(255.99f * b);
         }
     }
 

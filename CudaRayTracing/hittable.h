@@ -29,7 +29,7 @@ public:
 		return 0.0f;
 	}
 
-	GPU virtual vec3 random(const vec3& o) const {
+	GPU virtual vec3 random(const vec3& o, curandState* local_rand) const {
 		return vec3(1, 0, 0);
 	}
 };

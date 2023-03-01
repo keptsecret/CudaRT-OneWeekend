@@ -37,7 +37,7 @@ public:
 	}
 
 	GPU virtual vec3 generate(curandState* local_rand) const override {
-		return ptr->random(o);
+		return ptr->random(o, local_rand);
 	}
 
 public:
